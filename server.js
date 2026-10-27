@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 
-const PORT = process.env.PORT || 6083;
+const PORT = process.env.PORT || 7000;
 const ROOT_DIR = process.cwd(); // Current working directory as root
 
 // Common MIME types for file serving
