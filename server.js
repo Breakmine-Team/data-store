@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 7000;
 const ROOT_DIR = process.cwd(); // Current working directory as root
 
 // Published builds live in git history, not on disk: the checkout only keeps
-// the newest index.html. Older ones are read straight from the data-store repo
-// on GitHub, so hosting every version costs no extra storage here.
+// the newest index.html / index-beta.html. Older ones are read straight from the
+// data-store repo on GitHub, so hosting every version costs no extra storage here.
 const REPO = process.env.DATA_STORE_REPO_SLUG || 'Breakmine-Team/data-store';
 const RAW_BASE = process.env.DATA_STORE_RAW_BASE || `https://raw.githubusercontent.com/${REPO}`;
 const BUILD_MANIFEST = path.join(ROOT_DIR, 'builds.json');
@@ -33,7 +33,7 @@ const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 let manifestCache = { mtimeMs: -1, versions: {} };
 
 // builds.json is written by scripts/publish-single.js:
-//   { "versions": { "1.6.9b": { "sha": "<commit>", "published": "<iso date>" } } }
+//   { "versions": { "1.6.9b": { "sha": "<commit>", "betaSha": "<commit>", "published": "<iso date>" } } }
 function readBuildManifest() {
   let stats;
   try {
@@ -59,20 +59,41 @@ function readBuildManifest() {
 }
 
 // Routes that are answered from git history:
-//   /build/<commit>/index.html   exact published commit
+//   /beta                        latest beta (HEAD/index-beta.html)
+//   /beta/index.html             same
+//   /build/<commit>/index.html   exact published regular commit
+//   /build/<commit>/index-beta.html exact published beta commit
 //   /<version>/index.html        release version, via builds.json
 //   /<version>/                  same, directory style
 function lookupArchivedBuild(pathname) {
+  if (/^\/beta(?:\/index\.html)?\/?$/i.test(pathname)) {
+    return { sha: 'HEAD', file: 'index-beta.html' };
+  }
+
+  const byShaBeta = pathname.match(/^\/build\/([0-9a-f]{7,40})\/index-beta\.html\/?$/i);
+  if (byShaBeta) {
+    return { sha: byShaBeta[1], file: 'index-beta.html' };
+  }
+
   const bySha = pathname.match(/^\/build\/([0-9a-f]{7,40})(?:\/index\.html)?\/?$/i);
   if (bySha) {
-    return { sha: bySha[1] };
+    return { sha: bySha[1], file: 'index.html' };
+  }
+
+  const byVersionBeta = pathname.match(/^\/([^/]+?)\/beta(?:\/index\.html)?\/?$/i);
+  if (byVersionBeta) {
+    const entry = readBuildManifest()[byVersionBeta[1]];
+    const targetSha = entry && (entry.betaSha || entry.sha);
+    if (typeof targetSha === 'string' && SHA_PATTERN.test(targetSha)) {
+      return { sha: targetSha, file: 'index-beta.html' };
+    }
   }
 
   const byVersion = pathname.match(/^\/([^/]+?)(?:\/index\.html)?\/?$/);
   if (byVersion) {
     const entry = readBuildManifest()[byVersion[1]];
     if (entry && typeof entry.sha === 'string' && SHA_PATTERN.test(entry.sha)) {
-      return { sha: entry.sha };
+      return { sha: entry.sha, file: 'index.html' };
     }
   }
 
@@ -81,14 +102,15 @@ function lookupArchivedBuild(pathname) {
 
 // The file GitHub serves is text/plain, which a browser would show as source.
 // Fetch it here and hand it back as text/html so a version is playable directly.
-async function sendArchivedBuild(sha, req, res) {
-  const url = `${RAW_BASE}/${sha}/index.html`;
+async function sendArchivedBuild(sha, req, res, fileName = 'index.html') {
+  const safeFile = fileName === 'index-beta.html' ? 'index-beta.html' : 'index.html';
+  const url = `${RAW_BASE}/${sha}/${safeFile}`;
 
   try {
     const upstream = await fetch(url, { method: req.method === 'HEAD' ? 'HEAD' : 'GET' });
     if (!upstream.ok) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end(`404 Not Found (build ${sha} has no index.html)`);
+      res.end(`404 Not Found (build ${sha} has no ${safeFile})`);
       return;
     }
 
@@ -148,6 +170,11 @@ const server = http.createServer((req, res) => {
         filePath = path.join(filePath, 'index.html');
         fs.stat(filePath, (err2, stats2) => {
           if (err2 || !stats2.isFile()) {
+            const archivedDir = lookupArchivedBuild(pathname);
+            if (archivedDir) {
+              sendArchivedBuild(archivedDir.sha, req, res, archivedDir.file);
+              return;
+            }
             res.writeHead(404, { 'Content-Type': 'text/plain' });
             res.end('404 Not Found');
             return;
@@ -169,7 +196,7 @@ const server = http.createServer((req, res) => {
 
     const archived = lookupArchivedBuild(pathname);
     if (archived) {
-      sendArchivedBuild(archived.sha, req, res);
+      sendArchivedBuild(archived.sha, req, res, archived.file);
       return;
     }
 
