@@ -1,5 +1,9 @@
 {
   "versions": {
+    "1.7.6b": {
+      "sha": "be06b6d1d88f904b104e07cf67f36adadc2ee6ee",
+      "published": "2026-11-27T17:02:16-05:00"
+    },
     "1.7.5b": {
       "sha": "7b36455a8686b971b325b7ea314c3d9abaa56922",
       "published": "2026-11-27T12:48:44-05:00"
